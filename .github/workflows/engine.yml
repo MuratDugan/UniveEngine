@@ -1,0 +1,95 @@
+name: Engine
+
+# Builds an engine from pinned sources on GitHub's macOS runners and, when asked, publishes it as a release
+# (engine tarball, complete corresponding source, licenses, build scripts) and adds it to engine/manifest.json.
+on:
+  workflow_dispatch:
+    inputs:
+      line:
+        description: "1 = Wine Staging + DXVK (DirectX 9–11), 2 = CrossOver Wine for D3DMetal (DirectX 12)"
+        type: choice
+        options: ["1", "2"]
+        default: "1"
+      version:
+        description: "Engine version, e.g. 1.1.0"
+        required: true
+      publish:
+        description: "Publish as a release and add it to the engine list"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+    env:
+      VERSION: ${{ inputs.version }}
+      LINE: ${{ inputs.line }}
+      OUT_DIR: ${{ github.workspace }}/dist
+      MANIFEST_BASE_URL: https://github.com/${{ github.repository }}/releases/download/engine-${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the version matches the line
+        run: |
+          case "$VERSION" in "$LINE".*) ;; *) echo "version $VERSION isn't a $LINE.x version" >&2; exit 1 ;; esac
+          if gh release view "engine-$VERSION" >/dev/null 2>&1; then echo "engine-$VERSION already exists" >&2; exit 1; fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Tools
+        run: |
+          brew install mingw-w64
+          if [ "$LINE" = 2 ]; then
+            brew install bison pkgconf freetype gnutls sdl2
+            sudo softwareupdate --install-rosetta --agree-to-license || true
+            engine/ci-install-gstreamer.sh
+          fi
+
+      - name: Build the engine
+        run: |
+          if [ "$LINE" = 1 ]; then engine/build-engine.sh "$VERSION"; else engine/build-engine-d3dmetal.sh "$VERSION"; fi
+
+      - name: Source, licenses and build scripts
+        run: |
+          engine/collect-sources.sh "$LINE" "$OUT_DIR/release"
+          mv "$OUT_DIR/univeengine-$VERSION.tar.xz" "$OUT_DIR/release/"
+          tar -czf "$OUT_DIR/release/univeengine-$VERSION-licenses.tar.gz" -C engine licenses
+          tar -czf "$OUT_DIR/release/univeengine-$VERSION-build-scripts.tar.gz" -C engine \
+            build-engine.sh build-engine-d3dmetal.sh manifest-add.py collect-sources.sh steamwebhelper-wrapper
+          (cd "$OUT_DIR/release" && shasum -a 256 * > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: univeengine-${{ inputs.version }}
+          path: dist/release/univeengine-${{ inputs.version }}.tar.xz
+          retention-days: 14
+
+      - name: Publish
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$LINE" = 1 ]; then
+            TITLE="Engine $VERSION (Wine Staging + DXVK, built by UniveEngine CI)"
+            ABOUT="DirectX 9–11 engine assembled in GitHub Actions from pinned upstream releases (see build-engine.sh)."
+            BACKENDS=dxvk
+          else
+            TITLE="Engine $VERSION (CrossOver Wine for D3DMetal, built by UniveEngine CI)"
+            ABOUT="DirectX 12 engine: Wine compiled in GitHub Actions from CodeWeavers' CrossOver source (see build-engine-d3dmetal.sh). No Apple software is included."
+            BACKENDS=d3dMetal,dxmt
+          fi
+          gh release create "engine-$VERSION" dist/release/* --title "$TITLE" --notes "$ABOUT
+
+          The complete corresponding source of every LGPL/GPL component is attached, with the license texts and the build scripts. Check files with SHA256SUMS. Built from commit ${GITHUB_SHA}."
+          SHA="$(shasum -a 256 "dist/release/univeengine-$VERSION.tar.xz" | cut -d' ' -f1)"
+          SIZE="$(stat -f%z "dist/release/univeengine-$VERSION.tar.xz")"
+          engine/manifest-add.py engine/manifest.json "$VERSION" "$MANIFEST_BASE_URL/univeengine-$VERSION.tar.xz" "$SHA" "$SIZE" "$BACKENDS"
+          git config user.name "Murat Duğan"
+          git config user.email "111883464+MuratDugan@users.noreply.github.com"
+          git add engine/manifest.json
+          git commit -m "Engine list: add $VERSION"
+          git push

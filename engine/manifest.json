@@ -1,0 +1,40 @@
+{
+  "engines": [
+    {
+      "version": "1.0.1",
+      "url": "https://github.com/MuratDugan/UniveEngine/releases/download/engine-1.0.1/mapc-engine-1.0.1.tar.xz",
+      "sha256": "f46ead65cb2ed6a381c8093c60312365cafe42e9f84ec280647821516ca9517b",
+      "size": 137562868,
+      "minAppVersion": "0.1",
+      "backends": [
+        "dxvk"
+      ]
+    },
+    {
+      "version": "1.1.0",
+      "url": "https://github.com/MuratDugan/UniveEngine/releases/download/engine-1.1.0/univeengine-1.1.0.tar.xz",
+      "sha256": "e7631e2b2643f827f2e00bfbeaba787fc8c1714bdc4f4f8035aa6cbca02b10c1",
+      "size": 137222524,
+      "minAppVersion": "0.1",
+      "backends": [
+        "dxvk"
+      ]
+    },
+    {
+      "version": "2.0.2",
+      "url": "https://github.com/MuratDugan/UniveEngine/releases/download/engine-2.0.2/mapc-engine-2.0.2.tar.xz",
+      "sha256": "e04aa8531d6e29a62f9420686fb7911373750ceef797022a7f09f9b485a7463f",
+      "size": 299958584,
+      "minAppVersion": "1.0",
+      "backends": [
+        "d3dMetal",
+        "dxmt"
+      ]
+    }
+  ],
+  "steamArgs": [
+    "-no-cef-sandbox",
+    "-noverifyfiles"
+  ],
+  "knownIssues": {}
+}
