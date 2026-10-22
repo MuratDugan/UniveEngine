@@ -12,7 +12,7 @@ private struct FakeToolkit {
         try fm.createDirectory(at: lib.appendingPathComponent("external/D3DMetal.framework"), withIntermediateDirectories: true)
         try fm.createDirectory(at: lib.appendingPathComponent("wine/x86_64-windows"), withIntermediateDirectories: true)
         try Data("not apple".utf8).write(to: lib.appendingPathComponent("external/libd3dshared.dylib"))
-        for m in modules { try Data("MZ".utf8).write(to: lib.appendingPathComponent("wine/x86_64-windows/\(m).dll")) }
+        for m in modules { try makePE().write(to: lib.appendingPathComponent("wine/x86_64-windows/\(m).dll")) }
     }
     func cleanup() { try? FileManager.default.removeItem(at: root) }
 }
@@ -61,6 +61,26 @@ private struct FakeToolkit {
         let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: home.path)) ?? []
         #expect(leftovers.isEmpty)
         #expect(store.installed == nil)
+    }
+
+    @Test func refusesDLLsThatArentReal64BitWindowsDLLs() async throws {
+        let kit = try FakeToolkit()
+        defer { kit.cleanup() }
+        try Data("MZ not really".utf8).write(to: kit.lib.appendingPathComponent("wine/x86_64-windows/d3d12.dll"))
+        let store = D3DMetalStore(paths: Paths(home: kit.root.appendingPathComponent("home")))
+        await #expect(throws: D3DMetalError.missingModule("d3d12.dll")) { try await store.stage(from: kit.root) }
+    }
+
+    @Test func refusesSymlinkedAppleCode() async throws {
+        let kit = try FakeToolkit()
+        defer { kit.cleanup() }
+        let dylib = kit.lib.appendingPathComponent("external/libd3dshared.dylib")
+        try FileManager.default.removeItem(at: dylib)
+        let elsewhere = kit.root.appendingPathComponent("elsewhere.dylib")
+        try Data("someone else's code".utf8).write(to: elsewhere)
+        try FileManager.default.createSymbolicLink(atPath: dylib.path, withDestinationPath: elsewhere.path)
+        let store = D3DMetalStore(paths: Paths(home: kit.root.appendingPathComponent("home")))
+        await #expect(throws: D3DMetalError.notSignedByApple("libd3dshared.dylib")) { try await store.stage(from: kit.root) }
     }
 
     @Test func requiresTheCoreModules() async throws {

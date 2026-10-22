@@ -27,6 +27,8 @@ public enum D3DMetalError: Error, LocalizedError, Equatable {
 public struct D3DMetalInfo: Codable, Sendable, Equatable {
     public var version: String
     public var importedAt: Date
+    /// SHA-256 of each imported Windows DLL (`d3d12.dll` → hash), so what was imported can be audited later.
+    public var dllSHA256: [String: String]?
 }
 
 /// D3DMetal checked and copied out of the user's download, waiting for them to accept Apple's license.
@@ -191,26 +193,45 @@ public struct D3DMetalStore: Sendable {
         for module in Self.requiredModules where !fm.fileExists(atPath: windows.appendingPathComponent("\(module).dll").path) {
             throw D3DMetalError.missingModule("\(module).dll")
         }
+        // Only the two pieces of Apple code D3DMetal needs are taken from `external/`, and never through a symlink:
+        // everything copied there is checked against Apple's signature below.
+        let signedItems = ["D3DMetal.framework", "libd3dshared.dylib"]
+        var dllHashes: [String: String] = [:]
         do {
+            try fm.createDirectory(at: staging.appendingPathComponent("external"), withIntermediateDirectories: true)
             try fm.createDirectory(at: staging.appendingPathComponent("x86_64-windows"), withIntermediateDirectories: true)
-            try fm.copyItem(at: found.appendingPathComponent("external"), to: staging.appendingPathComponent("external"))
+            for name in signedItems {
+                let item = found.appendingPathComponent("external/\(name)")
+                guard !Self.isSymlink(item) else { throw D3DMetalError.notSignedByApple(name) }
+                try fm.copyItem(at: item, to: staging.appendingPathComponent("external/\(name)"))
+            }
             for module in Self.modules {
                 let dll = windows.appendingPathComponent("\(module).dll")
-                if fm.fileExists(atPath: dll.path) {
-                    try fm.copyItem(at: dll, to: staging.appendingPathComponent("x86_64-windows/\(module).dll"))
+                guard fm.fileExists(atPath: dll.path) else { continue }
+                // The Windows half of D3DMetal isn't Mac code, so it carries no code signature. It must at least be
+                // a real 64-bit Windows DLL (not a symlink or something else renamed), and its hash is recorded.
+                guard !Self.isSymlink(dll), PEImage(url: dll)?.machine == .x86_64 else {
+                    throw D3DMetalError.missingModule("\(module).dll")
                 }
+                let copy = staging.appendingPathComponent("x86_64-windows/\(module).dll")
+                try fm.copyItem(at: dll, to: copy)
+                dllHashes["\(module).dll"] = try EngineManager.sha256(of: copy)
             }
+        } catch let error as D3DMetalError {
+            throw error
         } catch {
             throw D3DMetalError.copyFailed(error.localizedDescription)
         }
 
         // Check the copies, not the source: these are the bytes that will run.
         let framework = staging.appendingPathComponent("external/D3DMetal.framework")
-        for item in [framework, staging.appendingPathComponent("external/libd3dshared.dylib")] where !Self.isSignedByApple(item) {
+        let verified = signedItems.map { staging.appendingPathComponent("external/\($0)") }
+        for item in verified where !Self.isSignedByApple(item) {
             throw D3DMetalError.notSignedByApple(item.lastPathComponent)
         }
-        // Copies from a downloaded disk image carry the quarantine flag; the signature check above replaces it.
-        Self.removeQuarantine(staging)
+        // Copies from a downloaded disk image carry the quarantine flag; the signature check above replaces it,
+        // so it's removed only from the items that passed it.
+        for item in verified { Self.removeQuarantine(item) }
 
         var license: URL?
         if let shipped = Self.findLicense(near: found, in: source) {
@@ -220,7 +241,7 @@ public struct D3DMetalStore: Sendable {
         let bundle = Bundle(url: framework)
         let version = bundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? bundle?.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
-        let info = D3DMetalInfo(version: version, importedAt: Date())
+        let info = D3DMetalInfo(version: version, importedAt: Date(), dllSHA256: dllHashes)
         try JSONEncoder.iso.encode(info).write(to: staging.appendingPathComponent("D3DMETAL.json"))
         return StagedD3DMetal(directory: staging, info: info, license: license)
     }
@@ -268,6 +289,10 @@ public struct D3DMetalStore: Sendable {
               let requirement else { return false }
         let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSCheckNestedCode)
         return SecStaticCodeCheckValidityWithErrors(code, flags, requirement, nil) == errSecSuccess
+    }
+
+    static func isSymlink(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
     }
 
     private static func removeQuarantine(_ dir: URL) {
