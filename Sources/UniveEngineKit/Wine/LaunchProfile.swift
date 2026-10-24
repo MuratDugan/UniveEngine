@@ -14,11 +14,16 @@ public struct LaunchProfile: Codable, Hashable, Sendable {
     public var commandAsControl = false
     public var extraEnvironment: [String: String] = [:]
     public var extraArguments: [String] = []
+    /// Extra `WINEDLLOVERRIDES` entries for this game only (`name=n,b`), e.g. from a game recipe.
+    public var dllOverrides: [String] = []
+    /// Frames per second the game is held to (DXVK), 0 for no limit: cooler and quieter, longer on battery.
+    public var frameRateLimit = 0
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case backend, performanceHUD, retina, verboseLogs, metalFX, rayTracing, commandAsControl, extraEnvironment, extraArguments
+        case dllOverrides, frameRateLimit
     }
 
     /// Missing keys keep their defaults, so profiles saved by older versions still load.
@@ -34,6 +39,8 @@ public struct LaunchProfile: Codable, Hashable, Sendable {
         commandAsControl = try c.decodeIfPresent(Bool.self, forKey: .commandAsControl) ?? d.commandAsControl
         extraEnvironment = try c.decodeIfPresent([String: String].self, forKey: .extraEnvironment) ?? d.extraEnvironment
         extraArguments = try c.decodeIfPresent([String].self, forKey: .extraArguments) ?? d.extraArguments
+        dllOverrides = try c.decodeIfPresent([String].self, forKey: .dllOverrides) ?? d.dllOverrides
+        frameRateLimit = try c.decodeIfPresent(Int.self, forKey: .frameRateLimit) ?? d.frameRateLimit
     }
 }
 

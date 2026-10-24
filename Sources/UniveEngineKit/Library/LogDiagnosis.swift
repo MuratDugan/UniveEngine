@@ -17,6 +17,8 @@ public struct LogDiagnosis: Equatable, Sendable {
         case setUpDirectX12
         /// Replace engine `from`, which the engine list dropped, with `to` (see `EngineManifest.updates`).
         case updateEngine(from: String, to: String)
+        /// Install a Microsoft runtime the game is missing (Visual C++, d3dx9) into its environment.
+        case installComponent(WindowsComponent)
         case reportProblem
         case none
     }
@@ -127,9 +129,15 @@ public struct LogDiagnosis: Equatable, Sendable {
         if let e = lines.last(where: { $0.contains("err:module:import_dll") && $0.contains("not found") }) {
             let dll = e.range(of: #"Library ([^\s]+) "#, options: .regularExpression)
                 .map { String(e[$0]).replacingOccurrences(of: "Library ", with: "").trimmingCharacters(in: .whitespaces) }
-            add("missing-dll", "A Windows file the game needs is missing",
-                "The game looks for \(dll ?? "a DLL") and can't find it. Verifying the game's files in its store, or reinstalling it, usually brings it back.",
-                .reportProblem, e)
+            if let dll, let component = WindowsComponent.providing(dll: dll) {
+                add("missing-runtime", "The game needs \(component.title)",
+                    "The game looks for \(dll), part of Microsoft's \(component.title) runtime, which this environment doesn't have yet.",
+                    .installComponent(component), e)
+            } else {
+                add("missing-dll", "A Windows file the game needs is missing",
+                    "The game looks for \(dll ?? "a DLL") and can't find it. Verifying the game's files in its store, or reinstalling it, usually brings it back.",
+                    .reportProblem, e)
+            }
         }
         if let e = line("ShellExecuteEx failed") ?? line("Application could not be started") {
             add("not-found", "The game's program couldn't be started",

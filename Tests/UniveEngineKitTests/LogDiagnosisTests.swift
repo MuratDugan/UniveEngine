@@ -101,10 +101,17 @@ import Testing
     }
 
     @Test func missingDLLIsNamed() {
-        let log = "0124:err:module:import_dll Library d3dx9_43.dll (which is needed by L\"C:\\\\Game\\\\game.exe\") not found"
+        let log = "0124:err:module:import_dll Library steam_api_custom.dll (which is needed by L\"C:\\\\Game\\\\game.exe\") not found"
         let d = LogDiagnosis(log: log)
         #expect(ids(d) == ["missing-dll"])
-        #expect(d.findings[0].detail.contains("d3dx9_43.dll"))
+        #expect(d.findings[0].detail.contains("steam_api_custom.dll"))
+    }
+
+    @Test func aMissingMicrosoftRuntimeOffersItsComponent() {
+        let log = "0124:err:module:import_dll Library d3dx9_43.dll (which is needed by L\"C:\\\\Game\\\\game.exe\") not found"
+        let d = LogDiagnosis(log: log)
+        #expect(ids(d) == ["missing-runtime"])
+        #expect(d.findings[0].action == .installComponent(.d3dx9))
     }
 
     @Test func antiCheatAndGenericCrash() {

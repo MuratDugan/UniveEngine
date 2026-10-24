@@ -68,9 +68,11 @@ public struct WineRunner: Sendable {
         let shipsBackend = engine.map { $0.info.backends.contains(backend.rawValue) } ?? true
         let backendOverrides = shipsBackend ? backend.overrides : []
         let overrides = [bottle.hasMono ? "mshtml=" : "mscoree,mshtml=", "winemenubuilder.exe=d"] + backendOverrides + extraOverrides
+            + profile.dllOverrides.filter(GameRecipe.isValidOverride)
         env["WINEDLLOVERRIDES"] = overrides.joined(separator: ";")
 
         for (k, v) in backend.environment { env[k] = v }
+        if backend == .dxvk, (1...1000).contains(profile.frameRateLimit) { env["DXVK_FRAME_RATE"] = String(profile.frameRateLimit) }
         if backend == .d3dMetal, let d3dshared = engine?.d3dMetalLibrary {
             env["CX_APPLEGPTK_LIBD3DSHARED_PATH"] = d3dshared.path
             env["CX_ACTIVE_GRAPHICS_BACKEND"] = "d3dmetal"   // CrossOver then reports GPU scheduling to DX12 games
