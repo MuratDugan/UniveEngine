@@ -51,12 +51,13 @@ import Testing
         let json = #"""
         {"recipes":{"steam:1":{"components":["vcrun2022"],"dllOverrides":["d3dx9_43=n,b","x=n;rm -rf","bad"],
          "environment":{"DXVK_HUD":"fps","DYLD_INSERT_LIBRARIES":"/tmp/x.dylib","WINEPREFIX":"/tmp","PATH":"/tmp"},
-         "arguments":["-dx11"],"backend":"dxvk","note":"Needs the VC++ runtime."}}}
+         "arguments":["-dx11","--wrapper","sh -c evil","--wine=/tmp/x","-a;b","/nolauncher","+set"],"backend":"dxvk","note":"Needs the VC++ runtime."}}}
         """#
         let recipe = try #require(GameRecipeBook.decode(Data(json.utf8)).recipe(for: "steam:1"))
         #expect(recipe.components == [.vcrun2022])
         #expect(recipe.dllOverrides == ["d3dx9_43=n,b"])
         #expect(recipe.environment == ["DXVK_HUD": "fps"])
+        #expect(recipe.arguments == ["-dx11", "/nolauncher", "+set"])   // no launcher options, no shell text
 
         var mine = LaunchProfile()
         mine.extraEnvironment = ["DXVK_HUD": "full"]
@@ -64,7 +65,7 @@ import Testing
         let applied = recipe.applied(to: mine)
         #expect(applied.backend == .dxvk)
         #expect(applied.extraEnvironment["DXVK_HUD"] == "full")      // the player's value wins
-        #expect(applied.extraArguments == ["-dx11", "-windowed"])
+        #expect(applied.extraArguments == ["-dx11", "/nolauncher", "+set", "-windowed"])
         #expect(applied.dllOverrides == ["d3dx9_43=n,b"])
         var chosen = LaunchProfile()
         chosen.backend = .wined3d

@@ -38,12 +38,19 @@ public struct GameRecipe: Codable, Equatable, Sendable {
         return key.allSatisfy { $0.isASCII && ($0.isUppercase || $0.isNumber || $0 == "_") } && prefixes.contains { key.hasPrefix($0) }
     }
 
+    /// A game flag a recipe may add: `-dx11`, `+set`, `/nolauncher`, `-width=1920`. Never `--anything`: launchers
+    /// (Legendary, Steam) read double-dash options themselves, and one like `--wrapper` would run a command.
+    public static func isAllowedArgument(_ arg: String) -> Bool {
+        guard (2...64).contains(arg.count), let first = arg.first, "-+/".contains(first), !arg.hasPrefix("--") else { return false }
+        return arg.dropFirst().allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "_.:=,".contains($0)) }
+    }
+
     /// The recipe with anything it isn't allowed to set left out.
     public var sanitized: GameRecipe {
         var r = self
         r.dllOverrides = dllOverrides?.filter(Self.isValidOverride)
         r.environment = environment?.filter { Self.isAllowedEnvironment($0.key) && !$0.value.contains("\0") }
-        r.arguments = arguments?.filter { !$0.contains("\0") && $0.count <= 256 }
+        r.arguments = arguments?.filter(Self.isAllowedArgument)
         return r
     }
 
