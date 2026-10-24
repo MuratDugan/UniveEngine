@@ -269,17 +269,17 @@ public struct SaveBackupStore: Sendable {
 
     // MARK: Copy
 
-    /// Copies a folder's files, keeping modification dates. Links and `.DS_Store` are skipped. With `overwrite`
-    /// a file that already exists is replaced; without it the target must not exist yet.
-    @discardableResult
-    /// The first path under `target` whose kind (file or folder) differs from the same path in `source`, if any.
+    /// The first path under `target` that a restore of `source` couldn't write: a file where the backup has a
+    /// folder or the reverse, or a link inside it (copying stops at links). `target` itself is never a link
+    /// (`SaveRoots.resolve` refuses those). Nil when the whole tree can be copied.
     static func typeClash(from source: URL, to target: URL) -> String? {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: target.path) else { return nil }
-        guard FileScan.isDirectory(target) else { return target.path }
-        for name in (try? fm.contentsOfDirectory(atPath: source.path)) ?? [] where name != ".DS_Store" {
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: target.path, isDirectory: &isFolder) else { return nil }
+        guard isFolder.boolValue else { return target.path }
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: source.path)) ?? [] where name != ".DS_Store" {
             let from = source.appendingPathComponent(name), to = target.appendingPathComponent(name)
-            guard fm.fileExists(atPath: to.path) else { continue }
+            if FileScan.isSymlink(to) { return to.path }
+            guard FileManager.default.fileExists(atPath: to.path) else { continue }
             if FileScan.isDirectory(from) {
                 if let clash = typeClash(from: from, to: to) { return clash }
             } else if FileScan.isDirectory(to) {
@@ -289,6 +289,9 @@ public struct SaveBackupStore: Sendable {
         return nil
     }
 
+    /// Copies a folder's files, keeping modification dates. Links and `.DS_Store` are skipped. With `overwrite`
+    /// a file that already exists is replaced; without it the target must not exist yet.
+    @discardableResult
     static func copyTree(from source: URL, to target: URL, overwrite: Bool = false) throws -> (files: Int, bytes: Int64) {
         let fm = FileManager.default
         try fm.createDirectory(at: target, withIntermediateDirectories: true)

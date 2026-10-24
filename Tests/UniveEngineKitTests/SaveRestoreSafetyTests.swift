@@ -53,4 +53,16 @@ import Testing
         #expect(throws: SaveBackupError.self) { try SaveBackupStore(destination: root).restore(backup, roots: roots) }
         #expect(try String(contentsOf: save.appendingPathComponent("keep.txt"), encoding: .utf8) == "inside")
     }
+
+    @Test func aLinkInsideTheSaveFolderStopsTheRestoreBeforeAnythingChanges() throws {
+        defer { cleanup() }
+        let other = save.deletingLastPathComponent().appendingPathComponent("a-first.sav")
+        try "first".write(to: other, atomically: true, encoding: .utf8)
+        let backup = try SaveBackupStore(destination: root).create(gameID: "steam:1", title: "Game", sources: [source], roots: roots)
+        try "changed".write(to: other, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: save)
+        try FileManager.default.createSymbolicLink(at: save, withDestinationURL: root.appendingPathComponent("elsewhere"))
+        #expect(throws: SaveBackupError.self) { try SaveBackupStore(destination: root).restore(backup, roots: roots) }
+        #expect(try String(contentsOf: other, encoding: .utf8) == "changed")   // nothing was copied
+    }
 }
