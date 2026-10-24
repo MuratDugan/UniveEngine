@@ -11,7 +11,7 @@ public enum SaveBackupError: LocalizedError, Equatable {
         switch self {
         case .noSources: "Choose which folders hold this game's saves first."
         case .nothingToBackUp: "None of the save folders exist yet. Play the game and save, then try again."
-        case .destinationUnavailable: "The backup folder isn't available. Choose a folder in Settings > Pro."
+        case .destinationUnavailable: "The backup folder isn't available. Choose another one in Settings › General."
         case .unsafeBackup: "This backup isn't valid, so it wasn't restored."
         case .copyFailed(let detail): "Couldn't copy the saves: \(detail)"
         }
