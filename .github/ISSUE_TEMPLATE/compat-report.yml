@@ -1,0 +1,59 @@
+name: Compatibility report
+description: Tell others how a game runs in UniveGame on your Mac. UniveGame fills this in for you.
+title: "Compatibility: "
+labels: ["compat-report"]
+body:
+  - type: input
+    id: game_id
+    attributes:
+      label: Game id
+      description: UniveGame's id for the game (store:id), filled in by the app.
+      placeholder: steam:1091500
+    validations:
+      required: true
+  - type: input
+    id: game_title
+    attributes:
+      label: Game
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: How does it run?
+      options:
+        - Works great
+        - Playable with issues
+        - Starts but isn't playable
+        - Doesn't start
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: Graphics backend
+      placeholder: DXVK
+  - type: input
+    id: engine
+    attributes:
+      label: Engine version
+      placeholder: "1.1.0"
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      placeholder: Mac16,1 (M4)
+  - type: input
+    id: macos
+    attributes:
+      label: macOS
+      placeholder: "27.0.1"
+  - type: input
+    id: app_version
+    attributes:
+      label: UniveGame version
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything others should know (settings that helped, what breaks). Optional.

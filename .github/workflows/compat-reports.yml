@@ -1,0 +1,34 @@
+name: Compatibility reports
+
+# Counts a compatibility report (an issue made with the "Compatibility report" form, which UniveGame fills in) into
+# engine/compat-reports.json, which UniveGame shows on each game's page.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  count:
+    if: contains(github.event.issue.labels.*.name, 'compat-report')
+    runs-on: ubuntu-latest
+    concurrency: compat-reports
+    steps:
+      - uses: actions/checkout@v4
+      - name: Count the report
+        run: python3 engine/compat-report.py "$GITHUB_EVENT_PATH" engine/compat-reports.json
+      - name: Save it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          git config user.name "Murat Duğan"
+          git config user.email "111883464+MuratDugan@users.noreply.github.com"
+          git add engine/compat-reports.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Compatibility report #$NUMBER"
+            git pull --rebase origin main && git push origin main
+          fi
+          gh issue close "$NUMBER" --comment "Thanks! Your report is counted and shows up in UniveGame within a day." --reason completed
