@@ -323,11 +323,12 @@ private final class PhaseLog: @unchecked Sendable {
 
 @Suite struct ProcessRunnerDrainTests {
     @Test func returnsWhenTheProgramExitsEvenIfAChildKeepsStderrOpen() async throws {
-        // Like `wine reg add` starting a wineserver that inherits stderr and outlives the command.
+        // Like `wine reg add` starting a wineserver that inherits stderr and outlives the command. The child
+        // lives far longer than the limit, so a slow, busy CI runner can't fail this but a blocked read still does.
         let started = Date()
         let result = try await ProcessRunner.run(URL(fileURLWithPath: "/bin/sh"),
-                                                 ["-c", "echo first; echo oops >&2; (sleep 4 >&2 &); printf last"])
-        #expect(Date().timeIntervalSince(started) < 2)
+                                                 ["-c", "echo first; echo oops >&2; (sleep 60 >&2 &); printf last"])
+        #expect(Date().timeIntervalSince(started) < 20)
         #expect(result.succeeded)
         #expect(result.output.contains("first"))
         #expect(result.output.contains("oops"))
