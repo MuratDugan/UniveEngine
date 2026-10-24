@@ -62,10 +62,10 @@ public enum MacDriver {
         return values
     }
 
-    /// The header line `[Software\\Wine\\Mac Driver] <time>`, at the start of a line.
-    private static func sectionStart(in text: String) -> String.Index? {
+    /// The header line `[Software\\Wine\\Mac Driver] <time>` (or `section`'s), at the start of a line.
+    static func sectionStart(in text: String, section: String = userRegSection) -> String.Index? {
         var from = text.startIndex
-        while let r = text.range(of: userRegSection, options: .caseInsensitive, range: from..<text.endIndex) {
+        while let r = text.range(of: section, options: .caseInsensitive, range: from..<text.endIndex) {
             if r.lowerBound == text.startIndex || text[text.index(before: r.lowerBound)].isNewline { return r.lowerBound }
             from = r.upperBound
         }
@@ -73,7 +73,7 @@ public enum MacDriver {
     }
 
     /// A `"..."` string at the start of `s` (backslash escapes undone), and what follows it.
-    private static func quoted(_ s: Substring) -> (String, Substring)? {
+    static func quoted(_ s: Substring) -> (String, Substring)? {
         guard s.first == "\"" else { return nil }
         var out = "", i = s.index(after: s.startIndex)
         while i < s.endIndex {

@@ -98,6 +98,7 @@ public struct Unive {
             FileHandle.standardError.write(Data("unive: note: UniveGame last ran this environment on engine \(recorded).\n".utf8))
         }
 
+        await runner.syncGPUIdentity(engine: engine, bottle: bottle)
         print("engine \(engine.version), backend \(profile.backend.displayName), environment \(options.bottle.rawValue)")
         let finished = AsyncStream<Int32>.makeStream()
         let process = try runner.run(engine: engine, bottle: bottle, executable: program,

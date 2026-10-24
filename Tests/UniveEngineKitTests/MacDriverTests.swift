@@ -136,3 +136,18 @@ private actor Writes {
         #expect(await runner.macDriverRegistry(engine: engine, bottle: bottle) == nil)
     }
 }
+
+@Suite struct GPUIdentityTests {
+    @Test func addsOnlyTheValuesTheBottleDoesntHave() {
+        let none = "WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\Mac Driver] 1\n\"RetinaMode\"=\"y\"\n"
+        #expect(GPUIdentity.missing(userReg: none).map(\.name) == ["VideoPciVendorID", "VideoPciDeviceID"])
+        let chosen = none + "\n[Software\\\\Wine\\\\Direct3D] 1700000000\n#time=1\n\"VideoPciVendorID\"=dword:000010de\n\n[Software\\\\Wine\\\\X] 1\n\"VideoPciDeviceID\"=dword:1\n"
+        // The vendor someone chose stays; the device id in another key doesn't count.
+        #expect(GPUIdentity.missing(userReg: chosen).map(\.name) == ["VideoPciDeviceID"])
+    }
+
+    @Test func reportsADirectX12ClassRadeon() {
+        #expect(GPUIdentity.values.map(\.value) == [0x1002, 0x731f])
+    }
+}
+
