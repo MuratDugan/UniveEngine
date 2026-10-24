@@ -1,5 +1,8 @@
 import Foundation
 
+/// WineD3D is Wine's own Direct3D. On macOS it only covers Direct3D 9 and older: Wine 11's Direct3D 10/11 can't create
+/// a device on Apple's OpenGL 4.1 or on MoltenVK ("Failed to create command stream"), so the DXVK engines keep DXVK as
+/// their builtin d3d11 and a game set to WineD3D still gets DXVK there.
 public enum GraphicsBackend: String, Codable, Sendable, CaseIterable {
     case auto, d3dMetal, dxmt, dxvk, wined3d
 
