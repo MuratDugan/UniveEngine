@@ -155,6 +155,8 @@ public struct SaveBackupStore: Sendable {
                   let target = roots.resolve(SaveSource(root: entry.root, path: entry.path)) else { throw SaveBackupError.unsafeBackup }
             let data = backup.folder.appendingPathComponent("data/\(entry.folder)", isDirectory: true)
             guard FileScan.isDirectory(data), !FileScan.isSymlink(data) else { throw SaveBackupError.unsafeBackup }
+            // A file where the backup has a folder (or the reverse) would stop the copy half way, or delete a folder.
+            if let clash = Self.typeClash(from: data, to: target) { throw SaveBackupError.copyFailed(clash) }
             plan.append((data, target))
         }
         let sources = manifest.entries.map { SaveSource(root: $0.root, path: $0.path) }
@@ -270,6 +272,23 @@ public struct SaveBackupStore: Sendable {
     /// Copies a folder's files, keeping modification dates. Links and `.DS_Store` are skipped. With `overwrite`
     /// a file that already exists is replaced; without it the target must not exist yet.
     @discardableResult
+    /// The first path under `target` whose kind (file or folder) differs from the same path in `source`, if any.
+    static func typeClash(from source: URL, to target: URL) -> String? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: target.path) else { return nil }
+        guard FileScan.isDirectory(target) else { return target.path }
+        for name in (try? fm.contentsOfDirectory(atPath: source.path)) ?? [] where name != ".DS_Store" {
+            let from = source.appendingPathComponent(name), to = target.appendingPathComponent(name)
+            guard fm.fileExists(atPath: to.path) else { continue }
+            if FileScan.isDirectory(from) {
+                if let clash = typeClash(from: from, to: to) { return clash }
+            } else if FileScan.isDirectory(to) {
+                return to.path
+            }
+        }
+        return nil
+    }
+
     static func copyTree(from source: URL, to target: URL, overwrite: Bool = false) throws -> (files: Int, bytes: Int64) {
         let fm = FileManager.default
         try fm.createDirectory(at: target, withIntermediateDirectories: true)
@@ -286,6 +305,7 @@ public struct SaveBackupStore: Sendable {
                 bytes += inner.bytes
             } else if type == .typeRegular {
                 if FileScan.isSymlink(to) { throw SaveBackupError.unsafeBackup }
+                if FileScan.isDirectory(to) { throw SaveBackupError.copyFailed(name) }   // never delete a folder for a file
                 if fm.fileExists(atPath: to.path) {
                     guard overwrite else { throw SaveBackupError.copyFailed(name) }
                     try fm.removeItem(at: to)

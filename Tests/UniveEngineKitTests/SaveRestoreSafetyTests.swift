@@ -42,4 +42,15 @@ import Testing
         #expect(try String(contentsOf: save, encoding: .utf8) == "old save")
         #expect(try String(contentsOf: #require(result.safetyBackup).folder.appendingPathComponent("data/0/slot.sav"), encoding: .utf8) == "new progress")
     }
+
+    @Test func aFolderWhereTheBackupHasAFileStopsTheRestoreBeforeAnythingChanges() throws {
+        defer { cleanup() }
+        let backup = try SaveBackupStore(destination: root).create(gameID: "steam:1", title: "Game", sources: [source], roots: roots)
+        // The game now keeps a folder named like the backed-up file: restoring must not delete it.
+        try FileManager.default.removeItem(at: save)
+        try FileManager.default.createDirectory(at: save, withIntermediateDirectories: true)
+        try "inside".write(to: save.appendingPathComponent("keep.txt"), atomically: true, encoding: .utf8)
+        #expect(throws: SaveBackupError.self) { try SaveBackupStore(destination: root).restore(backup, roots: roots) }
+        #expect(try String(contentsOf: save.appendingPathComponent("keep.txt"), encoding: .utf8) == "inside")
+    }
 }
