@@ -36,33 +36,31 @@ public enum ProcessRunner {
         process.standardOutput = out
         process.standardError = err
         let collector = Collector()
-
-        let attach: (Pipe, @escaping @Sendable (String) -> Line) -> Void = { pipe, wrap in
-            let splitter = LineSplitter()
+        // One serial queue for the readers and the final drain, so no line lands after the result is returned.
+        let serial = DispatchQueue(label: "univeengine.process-output")
+        let streams: [(Pipe, LineSplitter, @Sendable (String) -> Line)] = [
+            (out, LineSplitter(), { .stdout($0) }), (err, LineSplitter(), { .stderr($0) }),
+        ]
+        for (pipe, splitter, wrap) in streams {
             pipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if data.isEmpty { return }
-                for line in splitter.feed(data) {
-                    collector.append(line)
-                    onLine?(wrap(line))
+                guard !data.isEmpty else { return }
+                serial.sync {
+                    for line in splitter.feed(data) { collector.append(line); onLine?(wrap(line)) }
                 }
             }
         }
-        attach(out) { .stdout($0) }
-        attach(err) { .stderr($0) }
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ProcessResult, Error>) in
                 process.terminationHandler = { p in
-                    out.fileHandleForReading.readabilityHandler = nil
-                    err.fileHandleForReading.readabilityHandler = nil
-                    // Drain whatever is left in the pipes.
-                    for (pipe, wrap) in [(out, { Line.stdout($0) }), (err, { Line.stderr($0) })] {
-                        let rest = pipe.fileHandleForReading.readDataToEndOfFile()
-                        if let s = String(data: rest, encoding: .utf8), !s.isEmpty {
-                            for line in s.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
-                                collector.append(line); onLine?(wrap(line))
-                            }
+                    for (pipe, _, _) in streams { pipe.fileHandleForReading.readabilityHandler = nil }
+                    serial.sync {
+                        // Read what's left without waiting for end-of-file: Wine hands its stderr to wineserver and
+                        // its system processes, which keep the pipe open long after this command has exited.
+                        for (pipe, splitter, wrap) in streams {
+                            let rest = Self.drainWithoutBlocking(pipe.fileHandleForReading)
+                            for line in splitter.feed(rest) + splitter.flush() { collector.append(line); onLine?(wrap(line)) }
                         }
                     }
                     cont.resume(returning: ProcessResult(status: p.terminationStatus, output: collector.text))
@@ -73,6 +71,22 @@ public enum ProcessRunner {
         } onCancel: {
             if process.isRunning { process.terminate() }
         }
+    }
+}
+
+extension ProcessRunner {
+    /// Everything readable right now, then stops at "would block" instead of waiting for end-of-file.
+    static func drainWithoutBlocking(_ handle: FileHandle) -> Data {
+        let fd = handle.fileDescriptor
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let n = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if n > 0 { data.append(buffer, count: n) } else if n < 0 && errno == EINTR { continue } else { break }
+        }
+        return data
     }
 }
 
@@ -97,5 +111,13 @@ final class LineSplitter: @unchecked Sendable {
             lines.append(String(decoding: lineData, as: UTF8.self))
         }
         return lines
+    }
+
+    /// The last line when the output didn't end with a newline.
+    func flush() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        guard !buffer.isEmpty else { return [] }
+        defer { buffer.removeAll() }
+        return [String(decoding: buffer, as: UTF8.self)]
     }
 }

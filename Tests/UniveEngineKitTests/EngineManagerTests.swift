@@ -320,3 +320,17 @@ private final class PhaseLog: @unchecked Sendable {
         #expect(progress.last == 1)
     }
 }
+
+@Suite struct ProcessRunnerDrainTests {
+    @Test func returnsWhenTheProgramExitsEvenIfAChildKeepsStderrOpen() async throws {
+        // Like `wine reg add` starting a wineserver that inherits stderr and outlives the command.
+        let started = Date()
+        let result = try await ProcessRunner.run(URL(fileURLWithPath: "/bin/sh"),
+                                                 ["-c", "echo first; echo oops >&2; (sleep 4 >&2 &); printf last"])
+        #expect(Date().timeIntervalSince(started) < 2)
+        #expect(result.succeeded)
+        #expect(result.output.contains("first"))
+        #expect(result.output.contains("oops"))
+        #expect(result.output.contains("last"))   // no trailing newline: must not be dropped
+    }
+}
