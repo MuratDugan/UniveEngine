@@ -104,6 +104,42 @@ public struct EpicProvider: StoreProvider, Sendable {
         guard r.succeeded else { throw EpicError.commandFailed("The install didn't finish. You can resume it.") }
     }
 
+    /// Installed games with a newer build in the store.
+    public func availableUpdates() async -> Set<String> {
+        guard isLegendaryInstalled, isSignedIn,
+              let list = try? await json(["list", "--platform", "Windows", "--json"]),
+              let installed = try? await json(["list-installed", "--json"]) else { return [] }
+        return LegendaryParser.updates(listJSON: list, installedJSON: installed)
+    }
+
+    /// Downloads only what changed since the installed build.
+    public func update(_ game: Game, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        try await download(["install", game.storeID, "--update-only", "-y"], onProgress: onProgress,
+                           failure: "The update didn't finish. You can try again.")
+    }
+
+    /// Checks every file against Epic's manifest and downloads the damaged or missing ones.
+    public func repair(_ game: Game, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        try await download(["install", game.storeID, "--repair", "-y"], onProgress: onProgress,
+                           failure: "The repair didn't finish. You can try again.")
+    }
+
+    /// Moves the game's folder into `folder` (Legendary moves the files and records the new place).
+    public func move(_ game: Game, to folder: URL) async throws {
+        let r = try await run(["move", game.storeID, folder.path])
+        guard r.succeeded else { throw EpicError.commandFailed("Couldn't move \(game.title).") }
+    }
+
+    private func download(_ args: [String], onProgress: @escaping @Sendable (Double) -> Void, failure: String) async throws {
+        guard isLegendaryInstalled else { throw EpicError.legendaryMissing }
+        let r = try await ProcessRunner.run(legendary, args, environment: environment) { line in
+            switch line {
+            case .stdout(let s), .stderr(let s): if let p = LegendaryParser.progress(from: s) { onProgress(p) }
+            }
+        }
+        guard r.succeeded else { throw EpicError.commandFailed(failure) }
+    }
+
     public func uninstall(_ game: Game) async throws {
         let r = try await run(["uninstall", game.storeID, "-y"])
         guard r.succeeded else { throw EpicError.commandFailed("Couldn't uninstall \(game.title).") }

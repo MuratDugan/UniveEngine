@@ -6,9 +6,11 @@ struct LegendaryListEntry: Decodable {
         struct KeyImage: Decodable { let type: String; let url: String }
         let keyImages: [KeyImage]?
     }
+    struct AssetInfo: Decodable { let build_version: String? }
     let app_name: String
     let app_title: String
     let metadata: Metadata?
+    let asset_infos: [String: AssetInfo]?
 }
 
 struct LegendaryInstalledEntry: Decodable {
@@ -40,6 +42,18 @@ public enum LegendaryParser {
                 heroURL: image(e, ["DieselGameBox", "OfferImageWide"]))
         }
         .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    /// Installed games whose Windows build in the store differs from the installed one.
+    public static func updates(listJSON: Data, installedJSON: Data) -> Set<String> {
+        let decoder = JSONDecoder()
+        guard let owned = try? decoder.decode([LegendaryListEntry].self, from: listJSON),
+              let installed = try? decoder.decode([LegendaryInstalledEntry].self, from: installedJSON) else { return [] }
+        let latest = Dictionary(owned.compactMap { e in e.asset_infos?["Windows"]?.build_version.map { (e.app_name, $0) } }) { a, _ in a }
+        return Set(installed.compactMap { i in
+            guard let have = i.version, let newest = latest[i.app_name], newest != have else { return nil }
+            return i.app_name
+        })
     }
 
     /// Parses legendary's download progress line, e.g. `[DLManager] INFO: = Progress: 12.34% (123/1000), Running for ...`.

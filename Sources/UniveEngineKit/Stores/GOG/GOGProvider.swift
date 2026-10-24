@@ -45,7 +45,7 @@ public struct GOGProvider: StoreProvider, Sendable {
     public var isHelperInstalled: Bool { FileManager.default.isExecutableFile(atPath: gogdl.path) }
     public var isSignedIn: Bool { FileManager.default.fileExists(atPath: authFile.path) }
 
-    private var environment: [String: String] {
+    var environment: [String: String] {
         ["GOGDL_CONFIG_PATH": paths.gogConfig.path, "HOME": NSHomeDirectory(), "PATH": "/usr/bin:/bin"]
     }
 
@@ -177,11 +177,52 @@ public struct GOGProvider: StoreProvider, Sendable {
         try saveInstalled(installed)
     }
 
+    /// Checks the installed files against GOG's and downloads damaged or missing ones.
+    public func repair(_ game: Game, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        try await maintain("repair", game, onProgress: onProgress)
+    }
+
+    /// Brings the game to GOG's newest build (quick when it already is).
+    public func update(_ game: Game, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        try await maintain("update", game, onProgress: onProgress)
+    }
+
+    private func maintain(_ command: String, _ game: Game, onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        guard isSignedIn else { throw GOGError.notSignedIn }
+        guard let folder = loadInstalled().games[game.storeID]?.path else { throw GOGError.failed("\(game.title) isn't installed.") }
+        let r = try await ProcessRunner.run(
+            gogdl,
+            ["--auth-config-path", authFile.path, command, game.storeID, "--platform", "windows",
+             "--path", folder.path, "--skip-dlcs", "--lang", "en-US"],
+            environment: environment
+        ) { line in
+            switch line {
+            case .stdout(let s), .stderr(let s): if let p = GOGParser.progress(from: s) { onProgress(p) }
+            }
+        }
+        guard r.succeeded else { throw GOGError.failed("GOG couldn't \(command) \(game.title). You can try again.") }
+    }
+
+    /// Moves the game's folder into `folder` and records the new place.
+    public func move(_ game: Game, to folder: URL) throws {
+        var installed = loadInstalled()
+        guard let entry = installed.games[game.storeID] else { throw GOGError.failed("\(game.title) isn't installed.") }
+        let target = folder.appendingPathComponent(entry.path.lastPathComponent, isDirectory: true)
+        guard !FileManager.default.fileExists(atPath: target.path) else { throw GOGError.failed("\(target.path) already exists.") }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: entry.path, to: target)
+        installed.games[game.storeID] = .init(title: entry.title, path: target)
+        try saveInstalled(installed)
+    }
+
     public func uninstall(_ game: Game) throws {
         var installed = loadInstalled()
         if let entry = installed.games[game.storeID] {
-            // Only ever delete inside UniveEngine's GOG folder.
-            if entry.path.standardizedFileURL.path.hasPrefix(gamesFolder.standardizedFileURL.path + "/") {
+            // Only ever delete inside UniveEngine's GOG folder, or a folder that is this game's own (it holds its
+            // goggame-<id>.info: a game the player moved elsewhere).
+            let inGamesFolder = entry.path.standardizedFileURL.path.hasPrefix(gamesFolder.standardizedFileURL.path + "/")
+            let ownFolder = FileManager.default.fileExists(atPath: entry.path.appendingPathComponent("goggame-\(game.storeID).info").path)
+            if inGamesFolder || ownFolder {
                 try FileManager.default.removeItem(at: entry.path)
             }
             installed.games[game.storeID] = nil
