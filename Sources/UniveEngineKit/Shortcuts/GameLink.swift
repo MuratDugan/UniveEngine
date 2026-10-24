@@ -21,10 +21,11 @@ public enum GameLink {
         return id
     }
 
-    /// "<store>:<id>" with a known store and plain characters in the id.
+    /// "<store>:<id>" with a known store (or "custom", a game the player added) and plain characters in the id.
     public static func isValid(_ id: String) -> Bool {
         let parts = id.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2, StoreKind(rawValue: String(parts[0])) != nil, !parts[1].isEmpty, parts[1].count <= 200 else { return false }
+        guard parts.count == 2, StoreKind(rawValue: String(parts[0])) != nil || parts[0] == "custom",
+              !parts[1].isEmpty, parts[1].count <= 200 else { return false }
         return parts[1].allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }
     }
 }

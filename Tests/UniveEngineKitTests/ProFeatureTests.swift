@@ -263,6 +263,10 @@ private func write(_ text: String, to url: URL, modified: Date? = nil) throws {
         #expect(url.scheme == "univegame")
         #expect(GameLink.gameID(from: url) == "steam:268910")
         #expect(GameLink.gameID(from: URL(string: "univegame://play?game=gog:1207658924")!) == "gog:1207658924")
+        // Games the player added have shortcuts too.
+        let custom = "custom:A1F90613-55C5-4A7B-B817-0BC85393846A"
+        #expect(GameLink.gameID(from: try #require(GameLink.playURL(gameID: custom))) == custom)
+        #expect(GameLink.gameID(from: URL(string: "univegame://play?game=bogus:1")!) == nil)
     }
 
     @Test func linkRejectsAnythingElse() {
