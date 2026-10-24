@@ -17,6 +17,10 @@ on:
         description: "Publish as a release and add it to the engine list"
         type: boolean
         default: false
+      from_run:
+        description: "Reuse the engine an earlier run of this workflow built (its run ID) instead of building again"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -28,6 +32,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       LINE: ${{ inputs.line }}
+      FROM_RUN: ${{ inputs.from_run }}
       OUT_DIR: ${{ github.workspace }}/dist
       MANIFEST_BASE_URL: https://github.com/${{ github.repository }}/releases/download/engine-${{ inputs.version }}
     steps:
@@ -36,11 +41,16 @@ jobs:
       - name: Check the version matches the line
         run: |
           case "$VERSION" in "$LINE".*) ;; *) echo "version $VERSION isn't a $LINE.x version" >&2; exit 1 ;; esac
-          if gh release view "engine-$VERSION" >/dev/null 2>&1; then echo "engine-$VERSION already exists" >&2; exit 1; fi
+          # A release without its manifest entry is a publish that failed half way: let a rerun finish it.
+          if gh release view "engine-$VERSION" >/dev/null 2>&1 \
+             && python3 -c 'import json,sys; sys.exit(0 if any(e["version"]==sys.argv[1] for e in json.load(open("engine/manifest.json"))["engines"]) else 1)' "$VERSION"; then
+            echo "engine-$VERSION is already published" >&2; exit 1
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 
       - name: Tools
+        if: inputs.from_run == ''
         run: |
           brew install mingw-w64
           if [ "$LINE" = 2 ]; then
@@ -50,7 +60,18 @@ jobs:
           fi
 
       - name: Build the engine
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          if [ -n "$FROM_RUN" ]; then
+            # Only a successful run of this same workflow, for this version.
+            gh run view "$FROM_RUN" --json workflowName,conclusion --jq '"\(.workflowName) \(.conclusion)"' | grep -qx "Engine success" \
+              || { echo "run $FROM_RUN isn't a successful Engine run" >&2; exit 1; }
+            gh run download "$FROM_RUN" -n "univeengine-$VERSION" -D "$OUT_DIR"
+            echo "BUILT_SHA=$(gh run view "$FROM_RUN" --json headSha --jq .headSha)" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "BUILT_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           if [ "$LINE" = 1 ]; then engine/build-engine.sh "$VERSION"; else engine/build-engine-d3dmetal.sh "$VERSION"; fi
 
       - name: Source, licenses and build scripts
@@ -58,8 +79,11 @@ jobs:
           engine/collect-sources.sh "$LINE" "$OUT_DIR/release"
           mv "$OUT_DIR/univeengine-$VERSION.tar.xz" "$OUT_DIR/release/"
           tar -czf "$OUT_DIR/release/univeengine-$VERSION-licenses.tar.gz" -C engine licenses
-          tar -czf "$OUT_DIR/release/univeengine-$VERSION-build-scripts.tar.gz" -C engine \
-            build-engine.sh build-engine-d3dmetal.sh manifest-add.py collect-sources.sh steamwebhelper-wrapper
+          # The scripts that built this engine (an earlier commit's when reusing a run).
+          SCRIPTS="build-engine.sh build-engine-d3dmetal.sh manifest-add.py collect-sources.sh steamwebhelper-wrapper"
+          git checkout "$BUILT_SHA" -- $(for f in $SCRIPTS; do echo "engine/$f"; done)
+          tar -czf "$OUT_DIR/release/univeengine-$VERSION-build-scripts.tar.gz" -C engine $SCRIPTS
+          git checkout HEAD -- engine
           (cd "$OUT_DIR/release" && shasum -a 256 * > SHA256SUMS && cat SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
@@ -82,14 +106,21 @@ jobs:
             ABOUT="DirectX 12 engine: Wine compiled in GitHub Actions from CodeWeavers' CrossOver source (see build-engine-d3dmetal.sh). No Apple software is included."
             BACKENDS=d3dMetal,dxmt
           fi
-          gh release create "engine-$VERSION" dist/release/* --title "$TITLE" --notes "$ABOUT
+          if gh release view "engine-$VERSION" >/dev/null 2>&1; then
+            gh release upload "engine-$VERSION" dist/release/* --clobber
+          else
+            gh release create "engine-$VERSION" dist/release/* --target "$BUILT_SHA" --title "$TITLE" --notes "$ABOUT
 
-          The complete corresponding source of every LGPL/GPL component is attached, with the license texts and the build scripts. Check files with SHA256SUMS. Built from commit ${GITHUB_SHA}."
+          The complete corresponding source of every LGPL/GPL component is attached, with the license texts and the build scripts. Check files with SHA256SUMS. Built from commit ${BUILT_SHA}."
+          fi
           SHA="$(shasum -a 256 "dist/release/univeengine-$VERSION.tar.xz" | cut -d' ' -f1)"
           SIZE="$(stat -f%z "dist/release/univeengine-$VERSION.tar.xz")"
-          engine/manifest-add.py engine/manifest.json "$VERSION" "$MANIFEST_BASE_URL/univeengine-$VERSION.tar.xz" "$SHA" "$SIZE" "$BACKENDS"
           git config user.name "Murat Duğan"
           git config user.email "111883464+MuratDugan@users.noreply.github.com"
+          # main may have moved while the engine built: add the entry on top of the latest list.
+          git fetch origin main
+          git checkout -B main origin/main
+          engine/manifest-add.py engine/manifest.json "$VERSION" "$MANIFEST_BASE_URL/univeengine-$VERSION.tar.xz" "$SHA" "$SIZE" "$BACKENDS"
           git add engine/manifest.json
-          git commit -m "Engine list: add $VERSION"
-          git push
+          git diff --cached --quiet || git commit -m "Engine list: add $VERSION"
+          git push origin main

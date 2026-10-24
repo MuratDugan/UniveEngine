@@ -32,7 +32,8 @@ DXVK_URL="$DXVK_URL_BASE/$DXVK_NAME"
 
 fetch() { # name url sha
   local f="$CACHE/$1"
-  [ -f "$f" ] || curl -fL -sS -o "$f" "$2"
+  # A partial file from an interrupted run must not pass as a finished download.
+  [ -f "$f" ] || { curl -fL --retry 3 -sS -o "$f.part" "$2" && mv "$f.part" "$f"; }
   if [ -n "${3:-}" ]; then
     [ "$(shasum -a 256 "$f" | cut -d' ' -f1)" = "$3" ] || { echo "checksum mismatch: $1" >&2; exit 1; }
   fi
