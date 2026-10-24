@@ -149,5 +149,10 @@ private actor Writes {
     @Test func reportsADirectX12ClassRadeon() {
         #expect(GPUIdentity.values.map(\.value) == [0x1002, 0x731f])
     }
-}
 
+    @Test func readsValueNamesFromRegQueryOfAnyType() {
+        let out = "\r\nHKEY_CURRENT_USER\\Software\\Wine\\Direct3D\r\n    VideoPciVendorID    REG_DWORD    0x10de\r\n    renderer    REG_SZ    gl\r\n"
+        #expect(GPUIdentity.valueNames(regQuery: out) == ["VideoPciVendorID", "renderer"])
+        #expect(GPUIdentity.missing(present: ["videopcivendorid"]).map(\.name) == ["VideoPciDeviceID"])
+    }
+}
