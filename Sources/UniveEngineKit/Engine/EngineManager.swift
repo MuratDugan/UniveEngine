@@ -105,7 +105,8 @@ public struct EngineManager: Sendable {
 
     // MARK: Helpers
 
-    static func sha256(of file: URL) throws -> String {
+    /// SHA-256 of a file in lowercase hex, read in chunks.
+    public static func sha256(of file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         var hasher = SHA256()
@@ -127,8 +128,11 @@ public struct EngineManager: Sendable {
 
     /// Downloads with a classic download task: the async `download(from:delegate:)` never calls
     /// `didWriteData`, so its progress stayed at zero. Cancelling the Swift task cancels the download.
-    static func download(_ url: URL, to destination: URL, onProgress: @escaping @Sendable (Double) -> Void) async throws {
-        let delegate = DownloadDelegate(destination: destination, onProgress: onProgress)
+    /// `policy` limits where the request and its redirects may go and how large the file may be.
+    public static func download(_ url: URL, to destination: URL, policy: DownloadPolicy = DownloadPolicy(),
+                                onProgress: @escaping @Sendable (Double) -> Void) async throws {
+        guard policy.allows(url) else { throw EngineError.downloadFailed("\(url.host ?? "?") isn't an allowed server.") }
+        let delegate = DownloadDelegate(destination: destination, policy: policy, onProgress: onProgress)
         let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let task = session.downloadTask(with: url)
@@ -143,24 +147,59 @@ public struct EngineManager: Sendable {
     }
 }
 
+/// Where a download may go and how large it may be.
+public struct DownloadPolicy: Sendable {
+    /// Hosts the request and every redirect must use, over HTTPS. Nil allows any.
+    public var hosts: Set<String>?
+    /// Bytes; a larger download is stopped.
+    public var maximumSize: Int64?
+
+    public init(hosts: Set<String>? = nil, maximumSize: Int64? = nil) {
+        self.hosts = hosts
+        self.maximumSize = maximumSize
+    }
+
+    public func allows(_ url: URL?) -> Bool {
+        guard let hosts else { return true }
+        guard let url, url.scheme == "https", let host = url.host?.lowercased() else { return false }
+        return hosts.contains(host)
+    }
+}
+
 private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let destination: URL
+    let policy: DownloadPolicy
     let onProgress: @Sendable (Double) -> Void
     var continuation: CheckedContinuation<Void, Error>?
     private var moveError: Error?
 
-    init(destination: URL, onProgress: @escaping @Sendable (Double) -> Void) {
+    init(destination: URL, policy: DownloadPolicy, onProgress: @escaping @Sendable (Double) -> Void) {
         self.destination = destination
+        self.policy = policy
         self.onProgress = onProgress
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        if policy.allows(request.url) { completionHandler(request) } else {
+            moveError = EngineError.downloadFailed("Redirected to \(request.url?.host ?? "?"), which isn't allowed.")
+            completionHandler(nil)
+        }
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64,
                     totalBytesWritten written: Int64, totalBytesExpectedToWrite total: Int64) {
+        if let maximum = policy.maximumSize, written > maximum || total > maximum {
+            moveError = EngineError.downloadFailed("The file is larger than expected.")
+            downloadTask.cancel()
+            return
+        }
         if total > 0 { onProgress(Double(written) / Double(total)) }
     }
 
     // The temporary file is deleted when this returns, so it's moved into place here.
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard moveError == nil else { return }
         if let http = downloadTask.response as? HTTPURLResponse, http.statusCode != 200 {
             moveError = EngineError.downloadFailed("The server answered \(http.statusCode).")
             return
@@ -174,8 +213,10 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unc
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let result: Error? = if let error = error as? URLError, error.code == .cancelled { CancellationError() }
-            else { error ?? moveError }
+        // Our own reasons (a refused redirect, an oversized file) come first: they also cancel the task.
+        let result: Error? = if let moveError { moveError }
+            else if let error = error as? URLError, error.code == .cancelled { CancellationError() }
+            else { error }
         if let result { continuation?.resume(throwing: result) } else { continuation?.resume() }
         continuation = nil
     }

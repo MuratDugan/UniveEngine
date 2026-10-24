@@ -319,6 +319,32 @@ private final class PhaseLog: @unchecked Sendable {
         #expect(try Data(contentsOf: destination) == payload)
         #expect(progress.last == 1)
     }
+
+    @Test func downloadPolicyOnlyAllowsItsHostsOverHTTPS() async throws {
+        let policy = DownloadPolicy(hosts: ["github.com", "release-assets.githubusercontent.com"])
+        #expect(policy.allows(URL(string: "https://release-assets.githubusercontent.com/x")))
+        #expect(!policy.allows(URL(string: "http://github.com/x")))
+        #expect(!policy.allows(URL(string: "https://github.com.evil.example/x")))
+        #expect(DownloadPolicy().allows(URL(fileURLWithPath: "/tmp/x")))
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent("never-\(UUID().uuidString)")
+        await #expect(throws: EngineError.self) {
+            try await EngineManager.download(URL(fileURLWithPath: "/etc/hosts"), to: target, policy: policy) { _ in }
+        }
+        #expect(!FileManager.default.fileExists(atPath: target.path))
+    }
+
+    @Test func downloadStopsAtTheSizeLimit() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("dl-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("big.bin")
+        try Data(count: 2 << 20).write(to: source)
+        let destination = dir.appendingPathComponent("copy.bin")
+        await #expect(throws: EngineError.self) {
+            try await EngineManager.download(source, to: destination, policy: DownloadPolicy(maximumSize: 1 << 20)) { _ in }
+        }
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
 }
 
 @Suite struct ProcessRunnerDrainTests {
