@@ -26,8 +26,9 @@ public enum ShortcutApp {
     /// Creates (or replaces our own earlier shortcut for) the game. Returns the app's location.
     /// `icon` is an `.icns` file to copy in, if there is one.
     @discardableResult
-    public static func create(title: String, gameID: String, in folder: URL, icon: URL? = nil) throws -> URL {
-        guard let link = GameLink.playURL(gameID: gameID), !link.absoluteString.contains("'") else { throw ShortcutError.invalidGame }
+    /// `key` goes into its link (`GameLink.playURL(gameID:key:)`) so the app knows the request came from this shortcut.
+    public static func create(title: String, gameID: String, in folder: URL, icon: URL? = nil, key: String? = nil) throws -> URL {
+        guard let link = GameLink.playURL(gameID: gameID, key: key), !link.absoluteString.contains("'") else { throw ShortcutError.invalidGame }
         let fm = FileManager.default
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
 

@@ -267,6 +267,13 @@ private func write(_ text: String, to url: URL, modified: Date? = nil) throws {
         let custom = "custom:A1F90613-55C5-4A7B-B817-0BC85393846A"
         #expect(GameLink.gameID(from: try #require(GameLink.playURL(gameID: custom))) == custom)
         #expect(GameLink.gameID(from: URL(string: "univegame://play?game=bogus:1")!) == nil)
+        // The shortcut's key travels in the link; a malformed one is ignored, and a bad key isn't accepted.
+        let key = GameLink.newKey()
+        let keyed = try #require(GameLink.playURL(gameID: "steam:1", key: key))
+        #expect(GameLink.key(from: keyed) == key && GameLink.gameID(from: keyed) == "steam:1")
+        #expect(GameLink.key(from: URL(string: "univegame://play?game=steam:1&key=xyz")!) == nil)
+        #expect(GameLink.playURL(gameID: "steam:1", key: "'; rm -rf ~") == nil)
+        #expect(GameLink.newKey() != key)
     }
 
     @Test func linkRejectsAnythingElse() {
