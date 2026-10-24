@@ -77,8 +77,8 @@ public struct Unive {
             installed: locator.installed()) {
             locator.engine(for: profile.backend.resolved(), activeVersion: settings.activeEngineVersion)
         }
-        if profile.backend == .d3dMetal && !engine.supports(.d3dMetal) {
-            throw UsageError("engine \(engine.version) can't run D3DMetal; pick another with --engine or --backend")
+        if !engine.supports(profile.backend) {
+            throw UsageError("engine \(engine.version) can't run \(profile.backend.displayName); pick another with --engine or --backend")
         }
         return (engine, profile)
     }
