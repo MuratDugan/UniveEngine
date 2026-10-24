@@ -64,11 +64,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -n "$FROM_RUN" ]; then
-            # Only a successful run of this same workflow, for this version.
-            gh run view "$FROM_RUN" --json workflowName,conclusion --jq '"\(.workflowName) \(.conclusion)"' | grep -qx "Engine success" \
-              || { echo "run $FROM_RUN isn't a successful Engine run" >&2; exit 1; }
+            # Only a successful, manually started run of this workflow file on main, from a commit main contains.
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FROM_RUN" \
+              --jq '"\(.path) \(.event) \(.head_branch) \(.conclusion)"' \
+              | grep -qx ".github/workflows/engine.yml workflow_dispatch main success" \
+              || { echo "run $FROM_RUN isn't a successful Engine run on main" >&2; exit 1; }
+            RUN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FROM_RUN" --jq .head_sha)"
+            case "$(gh api "repos/$GITHUB_REPOSITORY/compare/$RUN_SHA...$GITHUB_SHA" --jq .status 2>/dev/null)" in
+              ahead|identical) ;;
+              *) echo "run $FROM_RUN was built from a commit main doesn't contain" >&2; exit 1 ;;
+            esac
             gh run download "$FROM_RUN" -n "univeengine-$VERSION" -D "$OUT_DIR"
-            echo "BUILT_SHA=$(gh run view "$FROM_RUN" --json headSha --jq .headSha)" >> "$GITHUB_ENV"
+            echo "BUILT_SHA=$RUN_SHA" >> "$GITHUB_ENV"
             exit 0
           fi
           echo "BUILT_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
@@ -81,6 +88,7 @@ jobs:
           tar -czf "$OUT_DIR/release/univeengine-$VERSION-licenses.tar.gz" -C engine licenses
           # The scripts that built this engine (an earlier commit's when reusing a run).
           SCRIPTS="build-engine.sh build-engine-d3dmetal.sh manifest-add.py collect-sources.sh steamwebhelper-wrapper"
+          git fetch -q --depth=1 origin "$BUILT_SHA"
           git checkout "$BUILT_SHA" -- $(for f in $SCRIPTS; do echo "engine/$f"; done)
           tar -czf "$OUT_DIR/release/univeengine-$VERSION-build-scripts.tar.gz" -C engine $SCRIPTS
           git checkout HEAD -- engine
