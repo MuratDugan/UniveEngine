@@ -65,10 +65,26 @@ public struct GOGProvider: StoreProvider, Sendable {
     // MARK: Account
 
     /// Exchanges the code from GOG's login redirect for tokens. The code is never logged.
+    /// A failed attempt puts the earlier sign-in back, so a mistyped code doesn't sign the account out.
     public func signIn(code: String) async throws {
-        let out = try await stdout(["--auth-config-path", authFile.path, "auth", "--code", code.trimmingCharacters(in: .whitespacesAndNewlines)])
+        let fm = FileManager.default
+        let previous = fm.contents(atPath: authFile.path)
+        func restore() {
+            try? fm.removeItem(at: authFile)
+            if let previous {
+                try? previous.write(to: authFile, options: .atomic)
+                try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authFile.path)
+            }
+        }
+        let out: Data
+        do {
+            out = try await stdout(["--auth-config-path", authFile.path, "auth", "--code", code.trimmingCharacters(in: .whitespacesAndNewlines)])
+        } catch {
+            restore()
+            throw error
+        }
         guard GOGParser.credentials(out) != nil, isSignedIn else {
-            try? FileManager.default.removeItem(at: authFile)
+            restore()
             throw GOGError.failed("GOG sign-in failed. Please try again.")
         }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authFile.path)
