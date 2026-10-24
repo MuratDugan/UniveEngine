@@ -96,4 +96,27 @@ import Testing
         #expect(text.contains("-applaunch\n123\n-dx11\nargument with spaces\n"))
         #expect(text.contains("engine=test"))
     }
+
+    @Test func repairClearsOnlyCaches() throws {
+        defer { cleanup() }
+        let fm = FileManager.default
+        let dir = steam.bottle.steamDirectory
+        let keep = ["config/loginusers.vdf", "steamapps/appmanifest_1.acf", "userdata/1/7/remote/save.dat"]
+        let caches = ["appcache/appinfo.vdf", "config/htmlcache/Cookies"]
+        for path in keep + caches {
+            let url = dir.appendingPathComponent(path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: url)
+        }
+        let local = steam.bottle.driveC.appendingPathComponent("users/someone/AppData/Local/Steam/htmlcache/Cache")
+        try fm.createDirectory(at: local.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: local)
+
+        #expect(steam.clearCaches().count == 3)
+        for path in keep { #expect(fm.fileExists(atPath: dir.appendingPathComponent(path).path)) }
+        for path in caches { #expect(!fm.fileExists(atPath: dir.appendingPathComponent(path).path)) }
+        #expect(!fm.fileExists(atPath: local.path))
+        #expect(steam.cacheFolders.isEmpty)
+    }
 }
+

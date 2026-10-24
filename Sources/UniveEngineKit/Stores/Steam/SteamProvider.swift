@@ -66,6 +66,29 @@ public struct SteamProvider: StoreProvider, Sendable {
         guard isSteamInstalled else { throw WineRunnerError.launchFailed("Steam did not install") }
     }
 
+    // MARK: Repair
+
+    /// Steam's caches, which a bad update or an interrupted start can leave in a state where the client hangs on
+    /// its splash or shows a blank window. Steam rebuilds them; logins (`config`), games (`steamapps`) and saves
+    /// (`userdata`) aren't in them.
+    public var cacheFolders: [URL] {
+        let fm = FileManager.default
+        var folders = [bottle.steamDirectory.appendingPathComponent("appcache", isDirectory: true),
+                       bottle.steamDirectory.appendingPathComponent("config/htmlcache", isDirectory: true)]
+        let users = bottle.driveC.appendingPathComponent("users", isDirectory: true)
+        for user in (try? fm.contentsOfDirectory(at: users, includingPropertiesForKeys: nil)) ?? [] {
+            folders.append(user.appendingPathComponent("AppData/Local/Steam/htmlcache", isDirectory: true))
+        }
+        return folders.filter { fm.fileExists(atPath: $0.path) }
+    }
+
+    /// Removes `cacheFolders`. Call while Steam is closed, then start it with `launchSteam(verifyFiles: true)`,
+    /// which also checks the client's own files. Returns the folders it removed.
+    @discardableResult
+    public func clearCaches() -> [URL] {
+        cacheFolders.filter { (try? FileManager.default.removeItem(at: $0)) != nil }
+    }
+
     // MARK: Launching
 
     /// Steam changes its CEF directory between client versions and updates restore Valve's helper,
