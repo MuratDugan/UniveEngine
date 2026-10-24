@@ -36,17 +36,20 @@ public enum ProcessRunner {
         process.standardOutput = out
         process.standardError = err
         let collector = Collector()
-        // One serial queue for the readers and the final drain, so no line lands after the result is returned.
+        // Both pipes are read without blocking, on one serial queue, by the readability handlers and by the final
+        // drain at exit. A handler that runs after the drain finds the run closed and reads nothing, so no output is
+        // lost or added after the result is returned, and reading an emptied pipe never throws.
         let serial = DispatchQueue(label: "univeengine.process-output")
         let streams: [(Pipe, LineSplitter, @Sendable (String) -> Line)] = [
             (out, LineSplitter(), { .stdout($0) }), (err, LineSplitter(), { .stderr($0) }),
         ]
         for (pipe, splitter, wrap) in streams {
-            pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
+            let fd = pipe.fileHandleForReading.fileDescriptor
+            Self.makeNonBlocking(fd)
+            pipe.fileHandleForReading.readabilityHandler = { _ in
                 serial.sync {
-                    for line in splitter.feed(data) { collector.append(line); onLine?(wrap(line)) }
+                    guard !collector.isClosed else { return }
+                    for line in splitter.feed(Self.readAvailable(fd)) { collector.append(line); onLine?(wrap(line)) }
                 }
             }
         }
@@ -55,15 +58,17 @@ public enum ProcessRunner {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<ProcessResult, Error>) in
                 process.terminationHandler = { p in
                     for (pipe, _, _) in streams { pipe.fileHandleForReading.readabilityHandler = nil }
-                    serial.sync {
+                    let output: String = serial.sync {
                         // Read what's left without waiting for end-of-file: Wine hands its stderr to wineserver and
                         // its system processes, which keep the pipe open long after this command has exited.
                         for (pipe, splitter, wrap) in streams {
-                            let rest = Self.drainWithoutBlocking(pipe.fileHandleForReading)
+                            let rest = Self.readAvailable(pipe.fileHandleForReading.fileDescriptor)
                             for line in splitter.feed(rest) + splitter.flush() { collector.append(line); onLine?(wrap(line)) }
                         }
+                        collector.close()
+                        return collector.text
                     }
-                    cont.resume(returning: ProcessResult(status: p.terminationStatus, output: collector.text))
+                    cont.resume(returning: ProcessResult(status: p.terminationStatus, output: output))
                 }
                 do { try process.run() }
                 catch { cont.resume(throwing: ProcessRunnerError.launchFailed(error.localizedDescription)) }
@@ -75,11 +80,13 @@ public enum ProcessRunner {
 }
 
 extension ProcessRunner {
-    /// Everything readable right now, then stops at "would block" instead of waiting for end-of-file.
-    static func drainWithoutBlocking(_ handle: FileHandle) -> Data {
-        let fd = handle.fileDescriptor
+    static func makeNonBlocking(_ fd: Int32) {
         let flags = fcntl(fd, F_GETFL)
-        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) >= 0 else { return Data() }
+        if flags >= 0 { _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK) }
+    }
+
+    /// Everything readable right now from a non-blocking descriptor; stops at "would block" or end-of-file.
+    static func readAvailable(_ fd: Int32) -> Data {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while true {
@@ -93,7 +100,11 @@ extension ProcessRunner {
 private final class Collector: @unchecked Sendable {
     private let lock = NSLock()
     private var lines: [String] = []
+    private var closed = false
     func append(_ line: String) { lock.lock(); lines.append(line); lock.unlock() }
+    /// The result has been taken: later reads are dropped.
+    func close() { lock.lock(); closed = true; lock.unlock() }
+    var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return closed }
     var text: String { lock.lock(); defer { lock.unlock() }; return lines.joined(separator: "\n") }
 }
 
