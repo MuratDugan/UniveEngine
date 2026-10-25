@@ -1,10 +1,11 @@
 name: Compatibility reports
 
 # Counts a compatibility report (an issue made with the "Compatibility report" form, which UniveGame fills in) into
-# engine/compat-reports.json, which UniveGame shows on each game's page.
+# engine/compat-reports.json, which UniveGame shows on each game's page. A maintainer labelling a report "spam" takes
+# it out again. Limits against spam are in engine/compat-report.py.
 on:
   issues:
-    types: [opened]
+    types: [opened, labeled]
 
 permissions:
   contents: write
@@ -12,23 +13,55 @@ permissions:
 
 jobs:
   count:
-    if: contains(github.event.issue.labels.*.name, 'compat-report')
+    if: >-
+      contains(github.event.issue.labels.*.name, 'compat-report') &&
+      (github.event.action == 'opened' || github.event.label.name == 'spam')
     runs-on: ubuntu-latest
-    concurrency: compat-reports
+    # One run per issue and event, so a burst of issues can't cancel anyone's run (a shared group keeps only one
+    # waiting). Runs that meet at the push retry on the newer file instead.
+    concurrency: compat-report-${{ github.event.issue.number }}-${{ github.event.action }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      NUMBER: ${{ github.event.issue.number }}
+      REPORTER_ID: ${{ github.event.issue.user.id }}
+      ACTION: ${{ github.event.action }}
     steps:
       - uses: actions/checkout@v4
       - name: Count the report
-        run: python3 engine/compat-report.py "$GITHUB_EVENT_PATH" engine/compat-reports.json
-      - name: Save it
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NUMBER: ${{ github.event.issue.number }}
+        id: count
         run: |
           git config user.name "Murat Duğan"
           git config user.email "111883464+MuratDugan@users.noreply.github.com"
-          git add engine/compat-reports.json
-          if ! git diff --cached --quiet; then
-            git commit -m "Compatibility report #$NUMBER"
-            git pull --rebase origin main && git push origin main
+          created=""
+          if [ "$ACTION" = opened ]; then
+            created=$(gh api "user/$REPORTER_ID" --jq .created_at)
           fi
-          gh issue close "$NUMBER" --comment "Thanks! Your report is counted and shows up in UniveGame within a day." --reason completed
+          for attempt in 1 2 3 4 5; do
+            # Always on the newest file: another report may have been saved since this run was queued.
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main
+            status=0
+            if [ "$ACTION" = labeled ]; then
+              python3 engine/compat-report.py remove "$GITHUB_EVENT_PATH" engine/compat-reports.json || status=$?
+            else
+              python3 engine/compat-report.py add "$GITHUB_EVENT_PATH" engine/compat-reports.json "$created" || status=$?
+            fi
+            # 3: not counted. Anything else but 0 is a failure, and the job stops here.
+            if [ "$status" != 0 ] && [ "$status" != 3 ]; then exit "$status"; fi
+            echo "status=$status" >> "$GITHUB_OUTPUT"
+            git add engine/compat-reports.json
+            if git diff --cached --quiet; then exit 0; fi
+            git commit --quiet -m "Compatibility report #$NUMBER ($ACTION)"
+            if git push --quiet origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 3))
+          done
+          echo "Couldn't save the report after 5 tries." >&2
+          exit 1
+      - name: Close the issue
+        if: github.event.action == 'opened'
+        run: |
+          if [ "${{ steps.count.outputs.status }}" = 0 ]; then
+            gh issue close "$NUMBER" --reason completed --comment "Thanks! Your report is counted and shows up in UniveGame within a day. A newer report of yours for the same game replaces this one."
+          else
+            gh issue close "$NUMBER" --reason "not planned" --comment "Thanks! This report isn't counted: reports come from GitHub accounts at least two weeks old, up to ten a day, and need the game id and result UniveGame fills in."
+          fi

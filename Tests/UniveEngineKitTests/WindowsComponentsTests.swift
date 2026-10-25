@@ -51,13 +51,15 @@ import Testing
         let json = #"""
         {"recipes":{"steam:1":{"components":["vcrun2022"],"dllOverrides":["d3dx9_43=n,b","x=n;rm -rf","bad"],
          "environment":{"DXVK_HUD":"fps","DYLD_INSERT_LIBRARIES":"/tmp/x.dylib","WINEPREFIX":"/tmp","PATH":"/tmp"},
-         "arguments":["-dx11","--wrapper","sh -c evil","--wine=/tmp/x","-a;b","/nolauncher","+set"],"backend":"dxvk","note":"Needs the VC++ runtime."}}}
+         "arguments":["-dx11","--wrapper","sh -c evil","--wine=/tmp/x","-a;b","/nolauncher","+set","--wrapper","evil","+mat_hdr_level","0","-force_vendor_id","0x1002","-x","-1","+connect","203.0.113.5:27015","+exec","evil","-applaunch","570"],"backend":"dxvk","note":"Needs the VC++ runtime."}}}
         """#
         let recipe = try #require(GameRecipeBook.decode(Data(json.utf8)).recipe(for: "steam:1"))
         #expect(recipe.components == [.vcrun2022])
         #expect(recipe.dllOverrides == ["d3dx9_43=n,b"])
         #expect(recipe.environment == ["DXVK_HUD": "fps"])
-        #expect(recipe.arguments == ["-dx11", "/nolauncher", "+set"])   // no launcher options, no shell text
+        // No launcher options, no shell text, and a value only after a known flag that takes one: never a server to
+        // join, a file to run or another game to start.
+        #expect(recipe.arguments == ["-dx11", "/nolauncher", "+set", "+mat_hdr_level", "0", "-force_vendor_id", "0x1002", "-x", "-1"])
 
         var mine = LaunchProfile()
         mine.extraEnvironment = ["DXVK_HUD": "full"]
@@ -65,7 +67,7 @@ import Testing
         let applied = recipe.applied(to: mine)
         #expect(applied.backend == .dxvk)
         #expect(applied.extraEnvironment["DXVK_HUD"] == "full")      // the player's value wins
-        #expect(applied.extraArguments == ["-dx11", "/nolauncher", "+set", "-windowed"])
+        #expect(applied.extraArguments == recipe.arguments! + ["-windowed"])
         #expect(applied.dllOverrides == ["d3dx9_43=n,b"])
         var chosen = LaunchProfile()
         chosen.backend = .wined3d
@@ -117,5 +119,15 @@ import Testing
         p.backend = .dxvk
         p.frameRateLimit = 0
         #expect(WineRunner.environment(bottle: bottle, profile: p)["DXVK_FRAME_RATE"] == nil)
+    }
+
+    /// The published recipes are valid and nothing in them is dropped by the safety rules.
+    @Test func publishedRecipesPassTheirOwnRules() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../engine/recipes.json")
+        let book = try GameRecipeBook.decode(Data(contentsOf: file))
+        for (id, recipe) in book.recipes {
+            #expect(book.recipe(for: id) == recipe, "\(id) has something the rules drop")
+            #expect(recipe.note?.isEmpty == false, "\(id) needs a note")
+        }
     }
 }

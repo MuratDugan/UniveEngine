@@ -13,8 +13,14 @@ public enum CloudSavePath {
         case upload
     }
 
-    /// The bottle user's Windows profile folder (`C:\users\<name>`), as save backups use it.
+    /// The bottle user's Windows profile folder (`C:\users\<name>`), as save backups use it. Which name that is
+    /// depends on the engine that created the bottle (the Mac user's, or `crossover`), so the bottle must exist.
     static func profile(of bottle: Bottle) -> URL { SaveRoots(bottle: bottle, installPath: nil).profile }
+
+    /// Documents, which Wine links to the Mac's Documents folder.
+    static func documents(of bottle: Bottle) -> URL {
+        profile(of: bottle).appendingPathComponent("Documents").resolvingSymlinksInPath()
+    }
 
     /// Epic's `CloudSaveFolder`: {InstallDir}, {EpicID}, {AppData} (which is *Local* AppData), {UserDir} (Documents),
     /// {UserProfile}, {UserSavedGames}. Nil when something is left unresolved.
@@ -23,12 +29,12 @@ public enum CloudSavePath {
         var vars: [String: String] = [
             "{installdir}": installPath.path,
             "{appdata}": profile.appendingPathComponent("AppData/Local").path,
-            "{userdir}": profile.appendingPathComponent("Documents").resolvingSymlinksInPath().path,
+            "{userdir}": documents(of: bottle).path,
             "{userprofile}": profile.path,
             "{usersavedgames}": profile.appendingPathComponent("Saved Games").path,
         ]
         if let accountID, accountID.allSatisfy({ $0.isLetter || $0.isNumber }) { vars["{epicid}"] = accountID }
-        return resolve(template.replacingOccurrences(of: "\\", with: "/"), vars, open: "{", close: "}")
+        return resolve(template.replacingOccurrences(of: "\\", with: "/"), vars, open: "{", close: "}", within: [profile, documents(of: bottle), installPath])
     }
 
     /// GOG Galaxy's cloud storage `location`: <?INSTALL?>, <?DOCUMENTS?>, <?SAVED_GAMES?>,
@@ -37,25 +43,71 @@ public enum CloudSavePath {
         let profile = profile(of: bottle)
         let vars: [String: String] = [
             "<?install?>": installPath.path,
-            "<?documents?>": profile.appendingPathComponent("Documents").resolvingSymlinksInPath().path,
+            "<?documents?>": documents(of: bottle).path,
             "<?saved_games?>": profile.appendingPathComponent("Saved Games").path,
             "<?application_data_local?>": profile.appendingPathComponent("AppData/Local").path,
             "<?application_data_local_low?>": profile.appendingPathComponent("AppData/LocalLow").path,
             "<?application_data_roaming?>": profile.appendingPathComponent("AppData/Roaming").path,
         ]
-        return resolve(location.replacingOccurrences(of: "\\", with: "/"), vars, open: "<?", close: "?>")
+        return resolve(location.replacingOccurrences(of: "\\", with: "/"), vars, open: "<?", close: "?>", within: [profile, documents(of: bottle), installPath])
     }
 
-    /// Replaces each variable (case-insensitively). The result must be absolute, free of "..", and resolved.
-    static func resolve(_ template: String, _ vars: [String: String], open: String, close: String) -> URL? {
-        var out = template
-        for (name, value) in vars {
-            while let r = out.range(of: name, options: .caseInsensitive) { out.replaceSubrange(r, with: value) }
+    /// Replaces each variable (case-insensitively, in one pass). The result must be absolute, below one of `roots`
+    /// once ".." is applied (Epic writes Roaming and LocalLow as `{AppData}/../Roaming`), and not pass through a
+    /// link: Wine links Desktop, Downloads and the like to the Mac's own folders, which a cloud sync must not touch.
+    static func resolve(_ template: String, _ vars: [String: String], open: String, close: String, within roots: [URL]) -> URL? {
+        let out = substitute(template, vars)
+        guard out.hasPrefix("/"), !out.contains(open), !out.contains(close) else { return nil }
+        let url = canonical(URL(fileURLWithPath: out, isDirectory: true))
+        guard let root = roots.map(canonical).first(where: { url.path.hasPrefix($0.path + "/") }) else { return nil }
+        let resolved = matchingCase(url, under: root)
+        var walk = root
+        for part in resolved.path.dropFirst(root.path.count).split(separator: "/") {
+            walk.appendPathComponent(String(part), isDirectory: true)
+            if FileScan.isSymlink(walk) { return nil }
         }
-        guard out.hasPrefix("/"), !out.contains(open), !out.contains(close),
-              !out.split(separator: "/").contains("..") else { return nil }
-        return URL(fileURLWithPath: out, isDirectory: true).standardizedFileURL
+        return resolved
     }
+
+    /// Standardized, and without `/private` before tmp, var and etc: macOS drops it from paths that exist but keeps
+    /// it in ones with ".." (or not there yet), and the two must compare equal.
+    static func canonical(_ url: URL) -> URL {
+        let path = url.standardizedFileURL.path
+        for prefix in ["/private/tmp/", "/private/var/", "/private/etc/"] where path.hasPrefix(prefix) {
+            return URL(fileURLWithPath: String(path.dropFirst("/private".count)), isDirectory: true)
+        }
+        return url.standardizedFileURL
+    }
+
+    /// Left to right, so a value that contains a variable's name is never replaced again.
+    static func substitute(_ template: String, _ vars: [String: String]) -> String {
+        var out = ""
+        var rest = template[...]
+        while !rest.isEmpty {
+            let next = vars.compactMap { name, value in rest.range(of: name, options: .caseInsensitive).map { ($0, value) } }
+                .min { $0.0.lowerBound < $1.0.lowerBound }
+            guard let (range, value) = next else { out += rest; break }
+            out += rest[..<range.lowerBound] + value
+            rest = rest[range.upperBound...]
+        }
+        return out
+    }
+
+    /// `AppData/locallow` as the folder that's there (`LocalLow`), or Windows' own spelling when it isn't there yet,
+    /// so a case-sensitive volume doesn't get a second one.
+    static func matchingCase(_ url: URL, under root: URL) -> URL {
+        var result = root
+        for part in url.path.dropFirst(root.path.count).split(separator: "/").map(String.init) {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: result.path)) ?? []
+            let name = names.contains(part) ? part
+                : names.first { $0.caseInsensitiveCompare(part) == .orderedSame }
+                ?? windowsNames.first { $0.caseInsensitiveCompare(part) == .orderedSame } ?? part
+            result.appendPathComponent(name, isDirectory: true)
+        }
+        return result
+    }
+
+    static let windowsNames = ["AppData", "Local", "LocalLow", "Roaming", "Documents", "Saved Games", "My Games"]
 }
 
 public extension EpicProvider {
@@ -80,6 +132,7 @@ public extension EpicProvider {
     /// Syncs the game's saves with Epic's cloud. The save folder is resolved here and handed to Legendary, so it
     /// never asks; `-y` answers its other questions (newer side wins).
     func syncSaves(_ game: Game, bottle: Bottle, direction: CloudSavePath.Direction = .both) async throws {
+        guard bottle.exists else { throw EpicError.commandFailed("Start \(game.title) once first, so its saves have a place to go.") }
         guard let install = game.installPath, let template = cloudSaveTemplate(game),
               let folder = CloudSavePath.epic(template: template, bottle: bottle, installPath: install, accountID: accountID) else {
             throw EpicError.commandFailed("\(game.title) has no cloud saves.")
@@ -138,6 +191,7 @@ public extension GOGProvider {
     /// Syncs each cloud location with GOG. `timestamps` are the last sync times by location name (from the previous
     /// call); the new ones come back.
     func syncSaves(_ game: Game, bottle: Bottle, timestamps: [String: String], direction: CloudSavePath.Direction = .both) async throws -> [String: String] {
+        guard bottle.exists else { throw GOGError.failed("Start \(game.title) once first, so its saves have a place to go.") }
         guard isSignedIn, let install = loadInstalled().games[game.storeID]?.path, let client = clientID(game) else {
             throw GOGError.failed("\(game.title) has no cloud saves.")
         }

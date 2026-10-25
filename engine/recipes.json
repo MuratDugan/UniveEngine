@@ -1,3 +1,18 @@
 {
-  "recipes": {}
+  "recipes": {
+    "steam:400": {
+      "backend": "dxvk",
+      "arguments": ["+mat_tonemapping_occlusion_use_stencil", "1"],
+      "note": "Keeps Source's HDR from freezing map loads on some Macs (the game's own switch). From Highball's Mac tests (highball-db, CC0)."
+    },
+    "steam:620": {
+      "backend": "dxvk",
+      "arguments": ["+mat_tonemapping_occlusion_use_stencil", "1", "-force_vendor_id", "0x1002", "-force_device_id", "0x73BF"],
+      "note": "Keeps Source's HDR from freezing map loads, and reports an AMD graphics card so dynamic shadows draw. From Highball's Mac tests (highball-db, CC0)."
+    },
+    "steam:271590": {
+      "arguments": ["-nobattleye"],
+      "note": "Starts story mode without BattlEye, whose kernel driver can't run on a Mac. GTA Online needs BattlEye and stays unavailable. From Highball's Mac tests (highball-db, CC0)."
+    }
+  }
 }

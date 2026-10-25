@@ -45,12 +45,42 @@ public struct GameRecipe: Codable, Equatable, Sendable {
         return arg.dropFirst().allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "_.:=,".contains($0)) }
     }
 
+    /// Flags that take a value. Only these may: a value after anything else could make a game do something rather
+    /// than set something (Source runs `+connect <address>` and `+exec <file>` as console commands).
+    public static let flagsWithValues: Set<String> = [
+        "-force_vendor_id", "-force_device_id", "-w", "-h", "-width", "-height", "-refresh", "-dxlevel",
+        "+mat_tonemapping_occlusion_use_stencil", "+mat_hdr_level", "+fps_max",
+    ]
+
+    /// Flags that act rather than set, refused even alone: joining a server, running a file, starting another game.
+    public static let refusedFlags: Set<String> = ["-applaunch", "+connect", "+exec", "+bind", "+alias", "+map", "+playdemo", "+password"]
+
+    /// A flag's value (`1`, `0x1002`, `1920`): letters, digits and `_.,`, never starting with a dash.
+    public static func isAllowedValue(_ value: String) -> Bool {
+        (1...32).contains(value.count) && value.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "_.,".contains($0)) }
+    }
+
+    /// `arguments` with anything not allowed left out; a value is kept only right after a kept flag that takes one.
+    public static func allowedArguments(_ arguments: [String]) -> [String] {
+        var kept: [String] = []
+        var takesValue = false
+        for arg in arguments {
+            if isAllowedArgument(arg), !refusedFlags.contains(arg.lowercased()) {
+                kept.append(arg)
+                takesValue = flagsWithValues.contains(arg.lowercased())
+            }
+            else if takesValue, isAllowedValue(arg) { kept.append(arg); takesValue = false }
+            else { takesValue = false }
+        }
+        return kept
+    }
+
     /// The recipe with anything it isn't allowed to set left out.
     public var sanitized: GameRecipe {
         var r = self
         r.dllOverrides = dllOverrides?.filter(Self.isValidOverride)
         r.environment = environment?.filter { Self.isAllowedEnvironment($0.key) && !$0.value.contains("\0") }
-        r.arguments = arguments?.filter(Self.isAllowedArgument)
+        r.arguments = arguments.map(Self.allowedArguments)
         return r
     }
 

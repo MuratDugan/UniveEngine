@@ -26,5 +26,26 @@
     "-no-cef-sandbox",
     "-noverifyfiles"
   ],
-  "knownIssues": {}
+  "knownIssues": {},
+  "antiCheat": [
+    {
+      "name": "Fall Guys",
+      "status": "Broken",
+      "anticheats": [
+        "Easy Anti-Cheat"
+      ],
+      "storeIds": {}
+    },
+    {
+      "name": "Delta Force",
+      "status": "Broken",
+      "anticheats": [
+        "Anti-Cheat Expert"
+      ],
+      "storeIds": {
+        "steam": "2507950"
+      }
+    }
+  ],
+  "accountRisks": []
 }

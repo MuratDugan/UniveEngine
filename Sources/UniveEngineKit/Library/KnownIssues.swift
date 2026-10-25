@@ -6,6 +6,14 @@ public enum KnownIssues {
         "epic:Fortnite": "Fortnite uses kernel-level anti-cheat that doesn't run on macOS.",
     ]
 
+    /// Games that run, but whose publisher doesn't support translation layers like Wine for online play, so an
+    /// account can be at risk (Valve's stance on Counter-Strike 2). The engine list (`accountRisks`) can add more.
+    public static let accountRisks: Set<String> = ["steam:730"]
+
+    public static func hasAccountRisk(_ game: Game, remote: Set<String> = []) -> Bool {
+        accountRisks.contains(game.id) || remote.contains(game.id)
+    }
+
     /// Shown for DirectX 12 games (found by `GraphicsProbe`) while no D3DMetal engine is installed.
     public static let needsDirectX12Engine =
         "This game uses DirectX 12. DirectX 12 compatibility is an advanced option that needs Apple's D3DMetal, which you install yourself under Apple's license."
