@@ -1,1 +1,34 @@
-{"games": {}}
+{
+  "games": {
+    "steam:2504480": {
+      "counts": {
+        "unplayable": 1
+      },
+      "recent": [
+        {
+          "app": "1.0.11",
+          "backend": "DXVK",
+          "date": "2026-11-21",
+          "engine": "1.1.0",
+          "issue": 1,
+          "mac": "Mac16,12",
+          "macos": "26.6.2",
+          "result": "unplayable"
+        }
+      ],
+      "title": "Indigo Park",
+      "votes": {
+        "263760026": {
+          "app": "1.0.11",
+          "backend": "DXVK",
+          "date": "2026-11-21",
+          "engine": "1.1.0",
+          "issue": 1,
+          "mac": "Mac16,12",
+          "macos": "26.6.2",
+          "result": "unplayable"
+        }
+      }
+    }
+  }
+}
